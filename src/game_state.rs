@@ -100,6 +100,7 @@ impl Position {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct GameState {
     cells: HashMap<Position, Cell>,
     width: usize,
@@ -158,7 +159,12 @@ impl GameState {
     fn reveal(&mut self, position: &Position) {
         let cell = self.cells.get_mut(&position);
         if let Some(cell) = cell {
-            if !cell.is_revealed {
+            if let Cell {
+                is_revealed: false,
+                marking: Marking::None,
+                ..
+            } = cell
+            {
                 cell.is_revealed = true;
 
                 if let CellType::NonMine { neighbours: 0 } = cell.cell_type {
@@ -243,77 +249,179 @@ impl canvas::Program<Message> for GameState {
         bounds: iced::Rectangle,
         cursor: iced::advanced::mouse::Cursor,
     ) -> Vec<canvas::Geometry<Renderer>> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(
-            Point::ORIGIN,
-            frame.size(),
-            Color::from_rgb8(0x20, 0x20, 0x20),
-        );
+        let cells = {
+            let mut frame = Frame::new(renderer, bounds.size());
+            frame.fill_rectangle(
+                Point::ORIGIN,
+                frame.size(),
+                Color::from_rgb8(0x20, 0x20, 0x20),
+            );
 
-        frame.with_save(|frame| {
+            frame.with_save(|frame| {
+                frame.scale(32.0);
+
+                for (position, cell) in &self.cells {
+                    let (color, text): (Color, Option<String>) = match cell {
+                        Cell {
+                            is_revealed: true,
+                            cell_type: CellType::Mine,
+                            ..
+                        } => (Color::from_rgb8(0xff, 0, 0), Some("•".to_owned())),
+                        Cell {
+                            is_revealed: true,
+                            cell_type: CellType::NonMine { neighbours },
+                            ..
+                        } if *neighbours > 0 => (
+                            Color::from_rgb8(0xff, 0xff, 0xff),
+                            Some(format!("{neighbours}")),
+                        ),
+                        Cell {
+                            is_revealed: true,
+                            cell_type: CellType::NonMine { neighbours: 0 },
+                            ..
+                        } => (Color::from_rgb8(0xff, 0xff, 0xff), None),
+                        Cell {
+                            is_revealed: false,
+                            marking: Marking::Flag,
+                            ..
+                        } => (Color::from_rgb8(0xff, 0x30, 0x10), Some("!".to_owned())),
+                        Cell {
+                            is_revealed: false,
+                            marking: Marking::QuestionMark,
+                            ..
+                        } => (Color::from_rgb8(0x20, 0x80, 0x40), Some("?".to_owned())),
+                        _ => (Color::from_rgb8(0x40, 0x40, 0x40), None),
+                    };
+
+                    let position = Point::new(position.column as f32, position.row as f32);
+                    frame.fill_rectangle(position, Size::UNIT, color);
+                    let position = Point::new(position.x + 0.5, position.y + 0.5);
+
+                    if let Some(content) = text {
+                        frame.fill_text(Text {
+                            content,
+                            position,
+                            size: 0.7.into(),
+                            color: Color::BLACK,
+                            horizontal_alignment: iced::alignment::Horizontal::Center,
+                            vertical_alignment: iced::alignment::Vertical::Center,
+                            ..Default::default()
+                        });
+                    }
+                }
+            });
+
+            frame.into_geometry()
+        };
+
+        let overlay = {
+            let mut frame = Frame::new(renderer, bounds.size());
             frame.scale(32.0);
 
-            for (position, cell) in &self.cells {
-                let (color, text): (Color, Option<String>) = match cell {
-                    Cell {
-                        is_revealed: true,
-                        cell_type: CellType::Mine,
-                        ..
-                    } => (Color::from_rgb8(0xff, 0, 0), Some("•".to_owned())),
-                    Cell {
-                        is_revealed: true,
-                        cell_type: CellType::NonMine { neighbours },
-                        ..
-                    } if *neighbours > 0 => (
-                        Color::from_rgb8(0xff, 0xff, 0xff),
-                        Some(format!("{neighbours}")),
-                    ),
-                    Cell {
-                        is_revealed: true,
-                        cell_type: CellType::NonMine { neighbours: 0 },
-                        ..
-                    } => (Color::from_rgb8(0xff, 0xff, 0xff), None),
-                    Cell {
-                        is_revealed: false,
-                        marking: Marking::Flag,
-                        ..
-                    } => (Color::from_rgb8(0xff, 0x30, 0x10), Some("!".to_owned())),
-                    Cell {
-                        is_revealed: false,
-                        marking: Marking::QuestionMark,
-                        ..
-                    } => (Color::from_rgb8(0x20, 0x80, 0x40), Some("?".to_owned())),
-                    _ => (Color::from_rgb8(0x20, 0x20, 0x20), None),
-                };
+            if let InteractionState::Pressed(button, position) = *state {
+                match button {
+                    Button::Middle => {
+                        let neighbours = position
+                            .neighbours()
+                            .flat_map(|n| self.cells.get_key_value(&n))
+                            .filter_map(|(position, cell)| {
+                                if matches!(
+                                    cell,
+                                    Cell {
+                                        is_revealed: false,
+                                        marking: Marking::None,
+                                        ..
+                                    }
+                                ) {
+                                    Some(position)
+                                } else {
+                                    None
+                                }
+                            });
 
-                let position = Point::new(position.column as f32, position.row as f32);
-                frame.fill_rectangle(position, Size::UNIT, color);
-                let position = Point::new(position.x + 0.5, position.y + 0.5);
+                        for n in neighbours {
+                            let position = Point::new(n.column as f32, n.row as f32);
+                            frame.fill_rectangle(
+                                position,
+                                Size::UNIT,
+                                Color::from_rgb8(0x10, 0x10, 0x10),
+                            );
+                        }
+                    }
+                    _ => {
+                        if let Some(&Cell {
+                            is_revealed: false, ..
+                        }) = self.cells.get(&position)
+                        {
+                            let position = Point::new(position.column as f32, position.row as f32);
+                            frame.fill_rectangle(
+                                position,
+                                Size::UNIT,
+                                Color::from_rgb8(0x10, 0x10, 0x10),
+                            );
+                        }
+                    }
+                }
+            } else {
+                let hovered_cell = cursor
+                    .position_in(bounds)
+                    .map(|position| Position::at(position))
+                    .and_then(|position| self.cells.get_key_value(&position));
 
-                if let Some(content) = text {
-                    frame.fill_text(Text {
-                        content,
+                if let Some((
+                    &position,
+                    &Cell {
+                        is_revealed: false, ..
+                    },
+                )) = hovered_cell
+                {
+                    let position = Point::new(position.column as f32, position.row as f32);
+                    frame.fill_rectangle(
                         position,
-                        size: 0.7.into(),
-                        color: Color::BLACK,
-                        horizontal_alignment: iced::alignment::Horizontal::Center,
-                        vertical_alignment: iced::alignment::Vertical::Center,
-                        ..Default::default()
-                    });
+                        Size::UNIT,
+                        Color::from_rgba8(0xff, 0xff, 0xff, 0.5),
+                    );
                 }
             }
-        });
 
-        vec![frame.into_geometry()]
+            frame.into_geometry()
+        };
+
+        vec![cells, overlay]
     }
 
     fn mouse_interaction(
         &self,
-        _state: &Self::State,
-        _bounds: iced::Rectangle,
-        _cursor: iced::advanced::mouse::Cursor,
+        state: &Self::State,
+        bounds: iced::Rectangle,
+        cursor: iced::advanced::mouse::Cursor,
     ) -> iced::advanced::mouse::Interaction {
-        mouse::Interaction::Pointer
+        let Some(cursor_position) = cursor.position_in(bounds) else {
+            return mouse::Interaction::default();
+        };
+
+        let position = Position::at(cursor_position);
+        let cell = self.cells.get(&position);
+
+        if let Some(&Cell {
+            is_revealed: false, ..
+        }) = cell
+        {
+            mouse::Interaction::Pointer
+        } else {
+            if let InteractionState::Pressed(_, pressed_position) = *state {
+                if let Some(&Cell {
+                    is_revealed: false, ..
+                }) = self.cells.get(&pressed_position)
+                {
+                    mouse::Interaction::Pointer
+                } else {
+                    mouse::Interaction::Idle
+                }
+            } else {
+                mouse::Interaction::Idle
+            }
+        }
     }
 
     fn update(
@@ -328,7 +436,7 @@ impl canvas::Program<Message> for GameState {
         };
 
         let position = Position::at(cursor_position);
-        let cell = self.cells.get(&position);
+        let current_state = *state;
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(button)) => {
@@ -337,7 +445,9 @@ impl canvas::Program<Message> for GameState {
                 (event::Status::Captured, None)
             }
             Event::Mouse(mouse::Event::ButtonReleased(button)) => {
-                if matches!(state, &mut InteractionState::Pressed(b, p) if b == button && p == position)
+                *state = InteractionState::None;
+
+                if matches!(current_state, InteractionState::Pressed(b, p) if b == button && p == position)
                 {
                     let message = match button {
                         Button::Left => Some(Message::Reveal(position)),

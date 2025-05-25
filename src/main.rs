@@ -35,9 +35,10 @@ struct Application {
     state: ApplicationState,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Message {
     SelectDifficulty(Difficulty),
+    StartGame(GameState),
     GameMessage(game_state::Message),
 }
 
@@ -57,15 +58,12 @@ impl Application {
                     Difficulty::Medium => (18, 14, 40),
                     Difficulty::Hard => (24, 20, 99),
                 };
-                self.state = ApplicationState::Game(GameState::new(width, height, mines));
 
                 window::get_oldest().and_then(move |id| {
-                    window::toggle_decorations(id)
-                        .chain(window::resize(
-                            id,
-                            Size::new((width * 32) as f32, (height * 32) as f32),
-                        ))
-                        .chain(window::toggle_decorations(id))
+                    let size = Size::new((width * 32) as f32, (height * 32) as f32);
+                    window::resize(id, size).chain(Task::done(Message::StartGame(GameState::new(
+                        width, height, mines,
+                    ))))
                 })
             }
             Message::GameMessage(message) => {
@@ -73,6 +71,10 @@ impl Application {
                     state.update(message)
                 }
 
+                Task::none()
+            }
+            Message::StartGame(game_state) => {
+                self.state = ApplicationState::Game(game_state);
                 Task::none()
             }
         }
