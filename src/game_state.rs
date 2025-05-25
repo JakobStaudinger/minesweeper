@@ -8,14 +8,11 @@ use iced::{
     mouse::Button,
     widget::{
         Canvas,
-        canvas::{self, Cache, Event, Frame, Text},
-        column, row,
+        canvas::{self, Event, Frame, Text},
     },
 };
 use itertools::iproduct;
-use rand::{Rng, seq::IteratorRandom};
-
-use crate::cell::Cell;
+use rand::seq::IteratorRandom;
 
 #[derive(Clone, Copy, Debug)]
 pub enum CellType {
@@ -24,13 +21,13 @@ pub enum CellType {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct CellState {
+pub struct Cell {
     pub is_revealed: bool,
     pub marking: Marking,
     pub cell_type: CellType,
 }
 
-impl Default for CellState {
+impl Default for Cell {
     fn default() -> Self {
         Self {
             is_revealed: false,
@@ -40,9 +37,9 @@ impl Default for CellState {
     }
 }
 
-impl CellState {
+impl Cell {
     pub fn mine() -> Self {
-        CellState {
+        Cell {
             cell_type: CellType::Mine,
             ..Default::default()
         }
@@ -104,7 +101,7 @@ impl Position {
 }
 
 pub struct GameState {
-    cells: HashMap<Position, CellState>,
+    cells: HashMap<Position, Cell>,
     width: usize,
     height: usize,
     mines: usize,
@@ -115,14 +112,15 @@ pub struct GameState {
 pub enum Message {
     Reveal(Position),
     ToggleMark(Position),
+    RevealSurrounding(Position),
 }
 
 impl GameState {
     pub fn new(width: usize, height: usize, mines: usize) -> Self {
-        let cells =
-            HashMap::from_iter((0..=width).flat_map(|c| {
-                (0..=height).map(move |r| (Position::new(r, c), CellState::default()))
-            }));
+        let cells = HashMap::from_iter(
+            (0..=width)
+                .flat_map(|c| (0..=height).map(move |r| (Position::new(r, c), Cell::default()))),
+        );
 
         Self {
             width,
@@ -144,7 +142,7 @@ impl GameState {
             .choose_multiple(&mut rng, self.mines);
 
         for p in mine_positions {
-            self.cells.insert(p, CellState::mine());
+            self.cells.insert(p, Cell::mine());
 
             for neighbor in p.neighbours() {
                 let cell = self.cells.get_mut(&neighbor);
@@ -179,6 +177,34 @@ impl GameState {
         }
     }
 
+    fn reveal_surrounding(&mut self, position: &Position) {
+        let cell = self.cells.get(&position);
+        if let Some(&Cell {
+            is_revealed: true,
+            cell_type: CellType::NonMine { neighbours },
+            ..
+        }) = cell
+        {
+            let (marked, unmarked): (Vec<_>, Vec<_>) =
+                position.neighbours().partition(|position| {
+                    matches!(
+                        self.cells.get(position),
+                        Some(&Cell {
+                            is_revealed: false,
+                            marking: Marking::Flag,
+                            ..
+                        })
+                    )
+                });
+
+            if marked.len() == neighbours {
+                for n in unmarked {
+                    self.reveal(&n);
+                }
+            }
+        }
+    }
+
     pub fn update(&mut self, message: Message) {
         match message {
             Message::Reveal(position) => {
@@ -190,48 +216,12 @@ impl GameState {
                 self.reveal(&position);
             }
             Message::ToggleMark(position) => self.toggle_mark(&position),
+            Message::RevealSurrounding(position) => self.reveal_surrounding(&position),
         }
     }
 
     pub fn view(&self) -> Element<Message> {
-        // let rows = 0..=self.height;
-        // let columns = 0..=self.width;
-
         Canvas::new(self).width(Fill).height(Fill).into()
-
-        // column(rows.map(move |r| {
-        //     row(columns.clone().map(move |c| {
-        //         let position = Position::new(r, c);
-        //         let Some(cell) = self.cells.get(&position) else {
-        //             return "".into();
-        //         };
-
-        //         let state = match cell {
-        //             CellState {
-        //                 is_revealed: true,
-        //                 cell_type: CellType::Mine,
-        //                 ..
-        //             } => crate::cell::State::Revealed(crate::cell::Content::Mine),
-        //             CellState {
-        //                 is_revealed: true,
-        //                 cell_type: CellType::NonMine { neighbours },
-        //                 ..
-        //             } => crate::cell::State::Revealed(crate::cell::Content::Number(*neighbours)),
-        //             _ => crate::cell::State::Normal,
-        //         };
-
-        //         Cell::new()
-        //             .with_state(state)
-        //             .on_click_with(move |button| match button {
-        //                 Button::Left => Some(Message::Reveal(position)),
-        //                 Button::Right => Some(Message::ToggleMark(position)),
-        //                 _ => None,
-        //             })
-        //             .into()
-        //     }))
-        //     .into()
-        // }))
-        // .into()
     }
 }
 
@@ -265,12 +255,12 @@ impl canvas::Program<Message> for GameState {
 
             for (position, cell) in &self.cells {
                 let (color, text): (Color, Option<String>) = match cell {
-                    CellState {
+                    Cell {
                         is_revealed: true,
                         cell_type: CellType::Mine,
                         ..
                     } => (Color::from_rgb8(0xff, 0, 0), Some("•".to_owned())),
-                    CellState {
+                    Cell {
                         is_revealed: true,
                         cell_type: CellType::NonMine { neighbours },
                         ..
@@ -278,17 +268,17 @@ impl canvas::Program<Message> for GameState {
                         Color::from_rgb8(0xff, 0xff, 0xff),
                         Some(format!("{neighbours}")),
                     ),
-                    CellState {
+                    Cell {
                         is_revealed: true,
                         cell_type: CellType::NonMine { neighbours: 0 },
                         ..
                     } => (Color::from_rgb8(0xff, 0xff, 0xff), None),
-                    CellState {
+                    Cell {
                         is_revealed: false,
                         marking: Marking::Flag,
                         ..
                     } => (Color::from_rgb8(0xff, 0x30, 0x10), Some("!".to_owned())),
-                    CellState {
+                    Cell {
                         is_revealed: false,
                         marking: Marking::QuestionMark,
                         ..
@@ -352,6 +342,7 @@ impl canvas::Program<Message> for GameState {
                     let message = match button {
                         Button::Left => Some(Message::Reveal(position)),
                         Button::Right => Some(Message::ToggleMark(position)),
+                        Button::Middle => Some(Message::RevealSurrounding(position)),
                         _ => None,
                     };
 

@@ -4,15 +4,18 @@ use iced::{
     Length::Fill,
     Size, Task,
     widget::{button, column, text},
-    window,
+    window::{self, Settings},
 };
 
-mod cell;
 mod game_state;
 
 fn main() -> iced::Result {
     iced::application("Minesweeper", Application::update, Application::view)
-        .window_size(Size::new(300.0, 300.0))
+        .window(Settings {
+            resizable: false,
+            size: Size::new(300.0, 300.0),
+            ..Default::default()
+        })
         .run()
 }
 
@@ -57,7 +60,12 @@ impl Application {
                 self.state = ApplicationState::Game(GameState::new(width, height, mines));
 
                 window::get_oldest().and_then(move |id| {
-                    window::resize(id, Size::new((width * 32) as f32, (height * 32) as f32))
+                    window::toggle_decorations(id)
+                        .chain(window::resize(
+                            id,
+                            Size::new((width * 32) as f32, (height * 32) as f32),
+                        ))
+                        .chain(window::toggle_decorations(id))
                 })
             }
             Message::GameMessage(message) => {
