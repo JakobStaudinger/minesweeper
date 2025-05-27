@@ -119,8 +119,8 @@ pub enum Message {
 impl GameState {
     pub fn new(width: usize, height: usize, mines: usize) -> Self {
         let cells = HashMap::from_iter(
-            (0..=width)
-                .flat_map(|c| (0..=height).map(move |r| (Position::new(r, c), Cell::default()))),
+            (0..width)
+                .flat_map(|c| (0..height).map(move |r| (Position::new(r, c), Cell::default()))),
         );
 
         Self {
